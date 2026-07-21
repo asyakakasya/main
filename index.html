@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Порядок нанесения макияжа</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  </head>
+  <body>
+    <section class="cover-page">
+      <img src="images/cover-girl.jpg" alt="Обложка с девушкой" />
+      <div class="cover-caption">
+        <p class="cover-caption__line cover-caption__line--small">Чек-лист</p>
+        <p class="cover-caption__line cover-caption__line--big">МАКИЯЖ ДЛЯ СЕБЯ</p>
+        <p class="cover-caption__line cover-caption__line--small">BY BLIS. NASTYA</p>
+      </div>
+    </section>
+
+    <main class="sheet">
+      <h1>Порядок нанесения макияжа</h1>
+
+      <ol class="main-list">
+        <li>
+          После умывания протираем лицо тоником,
+          наносим крем/солнцезащиту по необходимости.
+        </li>
+        <li>
+          Помните! Макияж нужно наносить после впитывания уходовых продуктов сразу,
+          исключение - солнцезащита. Ей нужно дать время хорошо усесться на коже.
+        </li>
+        <li>
+          Наносим тон: распределяем пальчиком по лицу либо набираем в ладонь,
+          остатки с пальчика обтираем о спонжик и наносим на лицо
+          вбивающими движениями.
+        </li>
+        <li>
+          Наносим консилер на синячок в углу глаза, почти залазя при необходимости
+          на переносицу и носослезную впадину, даем несколько секунд схватиться
+          и вбиваем спонжем. Сильно не надо тушевать, просто припечатать,
+          чтобы он там остался. Если мало - добавляем второй тонкий слой.
+        </li>
+        <li>
+          Наносим кремовые румяна и бронзер (порядок не важен)
+          синтетической кистью/спонжиком (сначала более-менее распределяем
+          по спонжику, чтобы не поставить на лицо неравномерное пятно).
+        </li>
+      </ol>
+
+      <section class="accent-block">
+        <div class="accent-text">
+          <p>Серое - естественная впадина под скуловой косточкой</p>
+          <p>Желтое - консилер</p>
+          <p>
+            Розовое - румяна. Оставляем яркий кружочек на самой высокой точке
+            и от нее немного тушуем, сохраняя диагональное направление
+          </p>
+          <p>Рыжее - бронзероскульптор</p>
+        </div>
+        <label class="accent-photo image-slot is-filled">
+          <img src="images/face-marked.png" alt="Схема нанесения на лице" />
+          <span class="photo-placeholder">Загрузить фото</span>
+          <input type="file" accept="image/*" />
+        </label>
+      </section>
+
+      <section class="next-part">
+        <h1>Порядок нанесения макияжа</h1>
+
+        <ol class="main-list" start="6">
+          <li>
+            Просушиваем лицо пудрой припечатывающими движениями, начинаем с Т-зоны
+            и потом остатками на кисти можно пройтись по всему лицу. Когда все
+            просушено, излишки пудры можно смахивать с лица выметающими движениями,
+            но на кисть все равно давить не нужно.
+          </li>
+          <li>
+            Наносим большой кистью бронзер на объемы
+            (там где быстрее всего загорает на солнышке).
+          </li>
+          <li>
+            Если используете сухие румяна - самый момент их нанести)
+          </li>
+        </ol>
+
+        <p class="warning-line">НЕ ЗАБЫВАЙТЕ СНИМАТЬ ОСТАТКИ БРОНЗЕРА И РУМЯН НА КОСТОЧКУ ГЛАЗА</p>
+
+        <section class="photo-compare">
+          <div class="photo-item">
+            <label class="photo-box image-slot is-filled">
+              <img src="images/bronzer-current.png" alt="Бронзер схема" />
+              <span class="photo-placeholder">Загрузить фото</span>
+              <input type="file" accept="image/*" />
+            </label>
+            <h2>Бронзер</h2>
+          </div>
+
+          <div class="photo-item">
+            <label class="photo-box photo-box--mark image-slot is-filled">
+              <img src="images/all-together-current.png" alt="Все вместе схема" />
+              <span class="photo-placeholder">Загрузить фото</span>
+              <input type="file" accept="image/*" />
+            </label>
+            <h2>Все вместе</h2>
+          </div>
+        </section>
+
+        <p class="bronzer-note">
+          Бронзер, особенно сухой, наносим крупно и смело, но важно нанести именно
+          на объем щеки, сохраняя диагональное направление. Важно чтобы в зоне
+          естественной впадины была только легкая тушевка от бронзера, чтобы нижняя
+          треть лица осталась "чистой". Мы создаем скульптуру на контрасте.
+        </p>
+      </section>
+
+      <section class="next-part next-part--brows">
+        <h1>Порядок нанесения макияжа</h1>
+
+        <ol class="main-list" start="9">
+          <li>
+            В конце аккуратно можем пройтись по лицу кистью от пудры, чтобы объединить
+            и смягчить интенсивность всех слоев. Дополнительно пудру набирать не нужно.
+            Помните! У нас есть спонжик, им можно как ластиком поправить коррекцию
+            аккуратными вбивающими движениями в случае если слишком ярко/не туда нанеслось.
+            (Предварительно на спонж набрать немножко тона или консилера)
+          </li>
+          <li>
+            Брови - если нужно подкрашиваем, либо просто укладываем гелем.
+          </li>
+        </ol>
+
+        <p class="brow-note">
+          Штрихами добавляем уголок и кончик брови. Можно подчеркнуть начало брови
+          карандашом, создав тень за волосками. Нижняя линия начала брови должна быть
+          ровной и чистой, если там натушевали карандаш - подчищаем консилером.
+          Бровь подкрашивание только там, где не хватает!!! Где много волосков
+          ничего дорисовывать не нужно - переутяжелим.
+        </p>
+
+        <label class="brow-photo image-slot is-filled">
+          <img src="images/point-10-brows.png" alt="Схема бровей для 10 пункта" />
+          <span class="photo-placeholder">Загрузить фото</span>
+          <input type="file" accept="image/*" />
+        </label>
+      </section>
+
+      <section class="next-part next-part--eyes">
+        <h1>Порядок нанесения макияжа</h1>
+
+        <p class="section-step">11. Макияж глаз</p>
+
+        <label class="eyes-photo image-slot is-filled">
+          <img src="images/point-11-eyes.png" alt="Схема макияжа глаз для 11 пункта" />
+          <span class="photo-placeholder">Загрузить фото</span>
+          <input type="file" accept="image/*" />
+        </label>
+
+        <p class="eyes-note">
+          Если затемняем линию ресниц карандашом - начиная с ВНЕШНЕГО уголка глаза
+          аккуратно по ресничкам но над ними, а не внутри, рисуем линию и сразу
+          растушевываем ее кистью. Чем ближе к центру глаза, тем тоньше должна быть
+          и линия, и тушевка.
+        </p>
+
+        <p class="eyes-note">
+          При необходимости можно небольшой кистью с консилером подчистить тушевку
+          и в уголке глаза (где темная линия грустная)
+        </p>
+
+        <p class="eyes-note">
+          На ваших глазах подводить всю линию роста ресниц, когда рисуем стрелки,
+          не обязательно, можно только сгладить до зрачка.
+        </p>
+
+        <p class="eyes-note">
+          Для яркости взгляда классно подвести внутренний уголок глаза изнутри.
+        </p>
+      </section>
+
+      <section class="next-part next-part--lips">
+        <p class="eyes-note">
+          12. Делаем макияж губ: от галочки к внешнему уголку (или наоборот)
+          ведем ровную линию НЕ СТЕСНЯЯСЬ ПО САМОМУ КРАЮ ОБЪЕМНОГО СВЕТЛОГО
+          КОНТУРА!) Нижнюю губу просто подводим, осторожно во внешних углах не
+          закругляем контур. Готовый контур можно подчищать плоской кистью с
+          тональником/консилером. Так макияж губ выглядит более чистым и
+          аккуратным+можно что-то подправить.
+        </p>
+
+        <p class="eyes-note">
+          После карандаша добавляем бальзам или блеск
+          (для пущего объема блеск наносим только на центр)
+        </p>
+
+      </section>
+
+      <section class="next-part upload-area">
+        <h1 class="cosmetics-title">Косметика</h1>
+
+        <div class="upload-block">
+          <h3>Блок 1</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 2</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 3</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 4</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 5</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 6</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 7</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 8</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 9</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 10</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 11</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 12</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 13</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 14</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+
+        <div class="upload-block">
+          <h3>Блок 15</h3>
+          <div class="upload-grid">
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+            <label class="upload-slot">+ Загрузить изображение<input type="file" accept="image/*" /></label>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+    <div class="pdf-button-wrap">
+      <button class="pdf-button" type="button" id="savePdfButton">Сохранить как PDF</button>
+    </div>
+  </body>
+</html>
