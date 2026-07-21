@@ -1,8 +1,141 @@
 const uploadInputs = document.querySelectorAll('.upload-slot input[type="file"], .image-slot input[type="file"]');
 const editableNodes = document.querySelectorAll(".sheet h1, .sheet h2, .sheet h3, .sheet p, .sheet li");
 const uploadBlocks = document.querySelectorAll(".upload-block");
-const STORAGE_KEY = "makeup-checklist-state-v1";
+const STORAGE_KEY = "makeup-checklist-state-v2";
+const DB_NAME = "makeup-checklist-db";
+const DB_VERSION = 1;
+const DB_STORE = "state";
+const DB_RECORD_KEY = "current";
+const IMAGE_MAX_SIDE = 1600;
+const IMAGE_JPEG_QUALITY = 0.82;
 let latestPdfUrl = "";
+let initialState = null;
+let stateDbPromise = null;
+let saveTimerId = null;
+let pendingStateForSave = null;
+let restoreStatePromise = Promise.resolve();
+
+function openStateDb() {
+  if (!("indexedDB" in window)) {
+    return Promise.resolve(null);
+  }
+
+  if (stateDbPromise) {
+    return stateDbPromise;
+  }
+
+  stateDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE);
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  }).catch(() => null);
+
+  return stateDbPromise;
+}
+
+function readStateFromDb() {
+  return openStateDb().then((db) => {
+    if (!db) {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readonly");
+      const store = tx.objectStore(DB_STORE);
+      const request = store.get(DB_RECORD_KEY);
+
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("IndexedDB read failed"));
+    });
+  });
+}
+
+function writeStateToDb(state) {
+  return openStateDb().then((db) => {
+    if (!db) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      store.put(state, DB_RECORD_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB write failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+    });
+  });
+}
+
+function persistState(state) {
+  writeStateToDb(state).catch(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (error) {
+      alert("Не удалось сохранить данные страницы. В браузере закончилось место.");
+    }
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("FileReader error"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Image load failed"));
+    image.src = url;
+  });
+}
+
+async function fileToOptimizedDataUrl(file) {
+  if (!file || typeof file.type !== "string" || !file.type.startsWith("image/")) {
+    return readFileAsDataUrl(file);
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await loadImageFromUrl(objectUrl);
+    const sourceWidth = image.naturalWidth || image.width || 1;
+    const sourceHeight = image.naturalHeight || image.height || 1;
+    const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(sourceWidth, sourceHeight));
+    const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+    const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return readFileAsDataUrl(file);
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+    return canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
+  } catch (error) {
+    return readFileAsDataUrl(file);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 function getJsPdfConstructor() {
   if (window.jspdf && window.jspdf.jsPDF) {
@@ -149,6 +282,11 @@ function assignPersistentIds() {
     if (!slot.dataset.persistId) {
       slot.dataset.persistId = `slot-${index + 1}`;
     }
+
+    const existingImage = slot.querySelector("img");
+    if (existingImage && !existingImage.dataset.initialSrc) {
+      existingImage.dataset.initialSrc = existingImage.getAttribute("src") || existingImage.src;
+    }
   });
 
   document.querySelectorAll(".upload-item").forEach((item) => {
@@ -159,24 +297,73 @@ function assignPersistentIds() {
 
     item.dataset.persistId = slot.dataset.persistId || "";
   });
+
+  document.querySelectorAll(".text-editable").forEach((node, index) => {
+    if (!node.dataset.persistId) {
+      node.dataset.persistId = `text-${index + 1}`;
+    }
+  });
 }
 
-function loadState() {
+async function loadState() {
+  try {
+    const dbState = await readStateFromDb();
+    if (dbState) {
+      return dbState;
+    }
+  } catch (error) {
+    // Fallback to localStorage below.
+  }
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       return null;
     }
 
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    persistState(parsed);
+    return parsed;
   } catch (error) {
     return null;
   }
 }
 
-function saveState() {
+function saveState(immediate = false) {
+  const state = captureState();
+
+  if (immediate) {
+    if (saveTimerId) {
+      clearTimeout(saveTimerId);
+      saveTimerId = null;
+    }
+    pendingStateForSave = null;
+    persistState(state);
+    return;
+  }
+
+  pendingStateForSave = state;
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+  }
+
+  saveTimerId = setTimeout(() => {
+    saveTimerId = null;
+    if (!pendingStateForSave) {
+      return;
+    }
+
+    const snapshot = pendingStateForSave;
+    pendingStateForSave = null;
+    persistState(snapshot);
+  }, 180);
+}
+
+function captureState() {
   const state = {
     images: {},
+    texts: {},
+    hiddenIds: [],
   };
 
   document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
@@ -185,17 +372,27 @@ function saveState() {
       return;
     }
 
-    if (slot.closest(".upload-area")) {
+    const image = slot.querySelector("img");
+    state.images[id] = image && image.src ? image.src : "";
+  });
+
+  document.querySelectorAll(".text-editable").forEach((node) => {
+    const id = node.dataset.persistId;
+    if (!id) {
       return;
     }
 
-    const image = slot.querySelector("img");
-    if (image && image.src) {
-      state.images[id] = image.src;
+    state.texts[id] = node.innerHTML;
+  });
+
+  document.querySelectorAll("[data-persist-id].is-hidden").forEach((node) => {
+    const id = node.dataset.persistId;
+    if (id) {
+      state.hiddenIds.push(id);
     }
   });
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  return state;
 }
 
 function setSlotImage(slot, src) {
@@ -221,34 +418,99 @@ function setSlotImage(slot, src) {
   slot.classList.add("is-filled");
 }
 
-function restoreState() {
-  const state = loadState();
-  if (!state) {
+function applyState(state) {
+  if (!state || typeof state !== "object") {
     return;
   }
 
-  document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
-    if (slot.closest(".upload-area")) {
-      const storedImage = slot.querySelector("img");
-      if (storedImage) {
-        storedImage.remove();
-      }
+  document.querySelectorAll("[data-persist-id]").forEach((node) => {
+    node.classList.remove("is-hidden");
+  });
 
-      slot.classList.remove("is-filled", "is-hidden");
-      slot.style.removeProperty("--slot-ratio");
+  document.querySelectorAll(".text-editable").forEach((node) => {
+    const id = node.dataset.persistId;
+    if (!id || !state.texts) {
       return;
     }
 
+    if (Object.prototype.hasOwnProperty.call(state.texts, id)) {
+      node.innerHTML = state.texts[id];
+    }
+  });
+
+  document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
     const id = slot.dataset.persistId;
     if (!id) {
       return;
     }
 
-    if (state.images && state.images[id]) {
-      setSlotImage(slot, state.images[id]);
+    const expectedSource = state.images && state.images[id] ? state.images[id] : "";
+    const image = slot.querySelector("img");
+
+    if (expectedSource) {
+      setSlotImage(slot, expectedSource);
+      return;
+    }
+
+    if (image) {
+      if (image.dataset.initialSrc) {
+        image.src = image.dataset.initialSrc;
+        slot.classList.add("is-filled");
+        image.onload = () => {
+          const width = image.naturalWidth || 1;
+          const height = image.naturalHeight || 1;
+          slot.style.setProperty("--slot-ratio", `${width} / ${height}`);
+        };
+      } else {
+        image.remove();
+        slot.classList.remove("is-filled");
+        slot.style.removeProperty("--slot-ratio");
+      }
     }
   });
 
+  if (Array.isArray(state.hiddenIds)) {
+    state.hiddenIds.forEach((id) => {
+      if (!id) {
+        return;
+      }
+
+      const target = document.querySelector(`[data-persist-id="${id}"]`);
+      if (target) {
+        target.classList.add("is-hidden");
+      }
+    });
+  }
+}
+
+async function restoreState() {
+  const state = await loadState();
+  if (!state) {
+    return;
+  }
+
+  applyState(state);
+}
+
+function clearStateStorage() {
+  return openStateDb().then((db) => {
+    if (!db) {
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      store.delete(DB_RECORD_KEY);
+      tx.oncomplete = () => {
+        localStorage.removeItem(STORAGE_KEY);
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB clear failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB clear aborted"));
+    });
+  });
 }
 
 function ensureUploadDescriptions() {
@@ -279,8 +541,20 @@ function ensureUploadDescriptions() {
 }
 
 ensureUploadDescriptions();
+editableNodes.forEach((node) => {
+  if (node.closest(".upload-slot") || node.closest(".image-slot")) {
+    return;
+  }
+
+  node.setAttribute("contenteditable", "true");
+  node.classList.add("text-editable");
+});
+
 assignPersistentIds();
-restoreState();
+initialState = captureState();
+restoreStatePromise = restoreState().catch(() => {
+  // Keep initial markup if restore fails.
+});
 
 function createRemoveButton(className, label) {
   const button = document.createElement("button");
@@ -337,17 +611,8 @@ uploadBlocks.forEach((block) => {
   block.appendChild(button);
 });
 
-editableNodes.forEach((node) => {
-  if (node.closest(".upload-slot") || node.closest(".image-slot")) {
-    return;
-  }
-
-  node.setAttribute("contenteditable", "true");
-  node.classList.add("text-editable");
-});
-
 uploadInputs.forEach((input) => {
-  input.addEventListener("change", (event) => {
+  input.addEventListener("change", async (event) => {
     const file = event.target.files && event.target.files[0];
     if (!file) {
       return;
@@ -358,14 +623,14 @@ uploadInputs.forEach((input) => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSlotImage(slot, String(reader.result || ""));
+    try {
+      const optimizedDataUrl = await fileToOptimizedDataUrl(file);
+      setSlotImage(slot, optimizedDataUrl);
       ensureSlotRemoveButton(slot);
-      saveState();
-    };
-
-    reader.readAsDataURL(file);
+      saveState(true);
+    } catch (error) {
+      alert("Не удалось обработать изображение. Попробуй другое фото.");
+    }
   });
 });
 
@@ -383,6 +648,39 @@ document.querySelectorAll(".upload-description").forEach((description) => {
   });
 });
 
+document.querySelectorAll(".text-editable").forEach((node) => {
+  node.addEventListener("input", () => {
+    saveState();
+  });
+});
+
+function bindResetButton() {
+  const resetButton = document.querySelector("#resetPageButton");
+  if (!resetButton) {
+    return;
+  }
+
+  resetButton.addEventListener("click", () => {
+    const confirmed = window.confirm("Сбросить страницу к исходному состоянию и удалить все сохраненные изменения?");
+    if (!confirmed) {
+      return;
+    }
+
+    clearStateStorage().catch(() => {
+      localStorage.removeItem(STORAGE_KEY);
+    });
+
+    if (initialState) {
+      applyState(initialState);
+    }
+
+    const readyPanel = document.getElementById("pdfReadyPanel");
+    if (readyPanel) {
+      readyPanel.remove();
+    }
+  });
+}
+
 function bindPdfButton() {
   const pdfButton = document.querySelector("#savePdfButton");
   if (!pdfButton) {
@@ -390,6 +688,8 @@ function bindPdfButton() {
   }
 
   pdfButton.addEventListener("click", async () => {
+    await restoreStatePromise;
+
     const html2canvas = window.html2canvas;
     const JsPdf = getJsPdfConstructor();
 
@@ -398,7 +698,7 @@ function bindPdfButton() {
       return;
     }
 
-    saveState();
+    saveState(true);
 
     const body = document.body;
     body.classList.add("is-exporting-pdf");
@@ -472,7 +772,11 @@ function bindPdfButton() {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", bindPdfButton);
+  document.addEventListener("DOMContentLoaded", () => {
+    bindPdfButton();
+    bindResetButton();
+  });
 } else {
   bindPdfButton();
+  bindResetButton();
 }
