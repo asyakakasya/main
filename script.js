@@ -727,6 +727,7 @@ uploadInputs.forEach((input) => {
     }
 
     try {
+      const optimizedDataUrl = await fileToOptimizedDataUrl(file);
       setSlotImage(slot, optimizedDataUrl);
       ensureSlotRemoveButton(slot);
       saveState(true);
