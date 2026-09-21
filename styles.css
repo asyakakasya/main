@@ -103,6 +103,16 @@ body {
   background: #e6d2b8;
 }
 
+.undo-button {
+  background: #f3eadf;
+}
+
+.undo-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .cover-caption {
   position: absolute;
   left: 50%;

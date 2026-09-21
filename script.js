@@ -1,19 +1,23 @@
 const uploadInputs = document.querySelectorAll('.upload-slot input[type="file"], .image-slot input[type="file"]');
 const editableNodes = document.querySelectorAll(".sheet h1, .sheet h2, .sheet h3, .sheet p, .sheet li");
 const uploadBlocks = document.querySelectorAll(".upload-block");
-const STORAGE_KEY = "makeup-checklist-state-v2";
+const STORAGE_KEY = "makeup-checklist-state-v5";
+const LEGACY_STORAGE_KEY = "makeup-checklist-state-v4";
 const DB_NAME = "makeup-checklist-db";
 const DB_VERSION = 1;
 const DB_STORE = "state";
 const DB_RECORD_KEY = "current";
 const IMAGE_MAX_SIDE = 1600;
-const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_JPEG_QUALITY = 0.8;
 let latestPdfUrl = "";
 let initialState = null;
 let stateDbPromise = null;
 let saveTimerId = null;
 let pendingStateForSave = null;
+let hasShownStorageError = false;
 let restoreStatePromise = Promise.resolve();
+const undoHistory = [];
+const MAX_UNDO_HISTORY = 20;
 
 function openStateDb() {
   if (!("indexedDB" in window)) {
@@ -76,14 +80,69 @@ function writeStateToDb(state) {
   });
 }
 
+function clearStateStorage() {
+  return openStateDb().then((db) => {
+    if (!db) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      store.delete(DB_RECORD_KEY);
+      tx.oncomplete = () => {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB clear failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB clear aborted"));
+    });
+  });
+}
+
+function showStorageErrorOnce() {
+  if (hasShownStorageError) {
+    return;
+  }
+
+  hasShownStorageError = true;
+  alert("Не удалось сохранить данные страницы в браузере. Проверь свободное место и настройки приватности.");
+}
+
 function persistState(state) {
   writeStateToDb(state).catch(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (error) {
-      alert("Не удалось сохранить данные страницы. В браузере закончилось место.");
+      showStorageErrorOnce();
     }
   });
+}
+
+function getJsPdfConstructor() {
+  if (window.jspdf && window.jspdf.jsPDF) {
+    return window.jspdf.jsPDF;
+  }
+
+  return null;
+}
+
+function waitForImages() {
+  const imagePromises = Array.from(document.images).map((image) => {
+    if (image.complete) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", resolve, { once: true });
+    });
+  });
+
+  return Promise.all(imagePromises);
 }
 
 function readFileAsDataUrl(file) {
@@ -137,212 +196,64 @@ async function fileToOptimizedDataUrl(file) {
   }
 }
 
-function getJsPdfConstructor() {
-  if (window.jspdf && window.jspdf.jsPDF) {
-    return window.jspdf.jsPDF;
-  }
-
-  return null;
+function getSafeCanvasScale(width, height) {
+  const deviceScale = Math.min(2, window.devicePixelRatio || 1);
+  const maxSide = 14000;
+  const maxArea = 120000000;
+  const sideScale = maxSide / Math.max(width, height);
+  const areaScale = Math.sqrt(maxArea / Math.max(1, width * height));
+  // Allow smaller scales for very long pages to avoid blank canvas on mobile.
+  return Math.max(0.12, Math.min(deviceScale, sideScale, areaScale));
 }
 
-function waitForImages() {
-  const imagePromises = Array.from(document.images).map((image) => {
-    if (image.complete) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      image.addEventListener("load", resolve, { once: true });
-      image.addEventListener("error", resolve, { once: true });
-    });
+function buildPdfFromCanvasPaged(canvas, JsPdf) {
+  const pdf = new JsPdf({
+    orientation: "portrait",
+    unit: "pt",
+    format: "a4",
+    compress: true,
   });
 
-  return Promise.all(imagePromises);
-}
+  const pdfWidth = pdf.internal.pageSize.getWidth();
+  const pdfHeight = pdf.internal.pageSize.getHeight();
+  const ratio = pdfWidth / canvas.width;
+  const sliceHeightPx = Math.max(1, Math.floor(pdfHeight / ratio));
+  let offsetY = 0;
+  let pageIndex = 0;
 
-function getPdfCloneStyleText() {
-  return `
-    .upload-slot,
-    .image-slot {
-      overflow: visible !important;
-      aspect-ratio: auto !important;
-      height: auto !important;
-      min-height: 0 !important;
+  while (offsetY < canvas.height) {
+    const currentSliceHeight = Math.min(sliceHeightPx, canvas.height - offsetY);
+    const pageCanvas = document.createElement("canvas");
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = currentSliceHeight;
+
+    const context = pageCanvas.getContext("2d");
+    if (!context) {
+      throw new Error("Не удалось подготовить страницу PDF");
     }
 
-    .upload-slot img,
-    .image-slot img {
-      position: static !important;
-      inset: auto !important;
-      transform: none !important;
-      width: 100% !important;
-      height: auto !important;
-      max-width: 100% !important;
-      max-height: none !important;
-      object-fit: contain !important;
-      object-position: center !important;
+    context.drawImage(
+      canvas,
+      0,
+      offsetY,
+      canvas.width,
+      currentSliceHeight,
+      0,
+      0,
+      canvas.width,
+      currentSliceHeight,
+    );
+
+    const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
+    const renderedHeight = currentSliceHeight * ratio;
+
+    if (pageIndex > 0) {
+      pdf.addPage();
     }
 
-    .remove-block-btn,
-    .remove-slot-btn,
-    .photo-placeholder,
-    input[type="file"],
-    .pdf-button-wrap {
-      display: none !important;
-    }
-  `;
-}
-
-function buildPdfPageNodes() {
-  const nodes = [];
-  const cover = document.querySelector(".cover-page");
-  const sheet = document.querySelector(".sheet");
-  if (!sheet) {
-    return nodes;
-  }
-
-  const uploadArea = sheet.querySelector(".upload-area");
-
-  const firstPageWrapper = document.createElement("div");
-  if (cover) {
-    firstPageWrapper.appendChild(cover.cloneNode(true));
-  }
-
-  const firstPageSheet = document.createElement("main");
-  firstPageSheet.className = sheet.className;
-  Array.from(sheet.children).forEach((child) => {
-    if (child === uploadArea) {
-      return;
-    }
-
-    firstPageSheet.appendChild(child.cloneNode(true));
-  });
-  firstPageWrapper.appendChild(firstPageSheet);
-  nodes.push(firstPageWrapper);
-
-  if (!uploadArea) {
-    const footerOnly = document.querySelector(".site-footer");
-    if (footerOnly) {
-      const footerWrapper = document.createElement("div");
-      footerWrapper.appendChild(footerOnly.cloneNode(true));
-      nodes.push(footerWrapper);
-    }
-    return nodes;
-  }
-
-  const cosmeticsTitle = Array.from(uploadArea.children).find(
-    (child) => child.classList && child.classList.contains("cosmetics-title"),
-  );
-  const cosmeticsBlocks = Array.from(uploadArea.children).filter(
-    (child) => child.classList && child.classList.contains("upload-block"),
-  );
-
-  for (let index = 0; index < cosmeticsBlocks.length; index += 4) {
-    const pageSection = document.createElement("section");
-    pageSection.className = uploadArea.className;
-
-    if (index === 0 && cosmeticsTitle) {
-      pageSection.appendChild(cosmeticsTitle.cloneNode(true));
-    }
-
-    cosmeticsBlocks.slice(index, index + 4).forEach((block) => {
-      pageSection.appendChild(block.cloneNode(true));
-    });
-
-    if (index + 4 >= cosmeticsBlocks.length) {
-      const footer = document.querySelector(".site-footer");
-      if (footer) {
-        pageSection.appendChild(footer.cloneNode(true));
-      }
-    }
-
-    nodes.push(pageSection);
-  }
-
-  return nodes;
-}
-
-async function renderPdfPageNode(node, html2canvas, scale) {
-  const renderRoot = document.createElement("div");
-  renderRoot.style.position = "fixed";
-  renderRoot.style.left = "-10000px";
-  renderRoot.style.top = "0";
-  renderRoot.style.width = `${Math.max(document.documentElement.clientWidth, document.body.clientWidth)}px`;
-  renderRoot.style.background = "#ffffff";
-  renderRoot.style.zIndex = "-1";
-  renderRoot.style.pointerEvents = "none";
-  renderRoot.appendChild(node);
-  document.body.appendChild(renderRoot);
-
-  try {
-    const canvas = await html2canvas(node, {
-      backgroundColor: "#ffffff",
-      scale,
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      scrollX: 0,
-      scrollY: 0,
-      windowWidth: Math.max(node.scrollWidth, renderRoot.clientWidth),
-      windowHeight: Math.max(node.scrollHeight, 1),
-      onclone: (clonedDoc) => {
-        const style = clonedDoc.createElement("style");
-        style.textContent = getPdfCloneStyleText();
-        clonedDoc.head.appendChild(style);
-      },
-    });
-
-    return canvas;
-  } finally {
-    renderRoot.remove();
-  }
-}
-
-function addCanvasAsPdfPage(pdf, canvas, JsPdf) {
-  const MAX_PDF_SIDE_PT = 14000;
-  const baseWidthPt = canvas.width * 0.75;
-  const baseHeightPt = canvas.height * 0.75;
-  const pageScale = Math.min(1, MAX_PDF_SIDE_PT / Math.max(baseWidthPt, baseHeightPt));
-  const pageWidthPt = Math.max(1, baseWidthPt * pageScale);
-  const pageHeightPt = Math.max(1, baseHeightPt * pageScale);
-  const orientation = pageWidthPt >= pageHeightPt ? "landscape" : "portrait";
-
-  if (!pdf) {
-    pdf = new JsPdf({
-      orientation,
-      unit: "pt",
-      format: [pageWidthPt, pageHeightPt],
-      compress: true,
-    });
-  } else {
-    pdf.addPage([pageWidthPt, pageHeightPt], orientation);
-  }
-
-  const imageData = canvas.toDataURL("image/jpeg", 0.96);
-  pdf.addImage(imageData, "JPEG", 0, 0, pageWidthPt, pageHeightPt, undefined, "FAST");
-  return pdf;
-}
-
-async function buildPdfWithCustomPageBreaks(html2canvas, JsPdf) {
-  const pageNodes = buildPdfPageNodes();
-  if (!pageNodes.length) {
-    throw new Error("Нет данных для экспорта PDF");
-  }
-
-  const scale = Math.min(2, window.devicePixelRatio || 1);
-  let pdf = null;
-
-  for (const pageNode of pageNodes) {
-    const canvas = await renderPdfPageNode(pageNode, html2canvas, scale);
-    if (!canvas.width || !canvas.height) {
-      continue;
-    }
-
-    pdf = addCanvasAsPdfPage(pdf, canvas, JsPdf);
-  }
-
-  if (!pdf) {
-    throw new Error("Не удалось собрать PDF");
+    pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, renderedHeight, undefined, "FAST");
+    pageIndex += 1;
+    offsetY += currentSliceHeight;
   }
 
   return pdf;
@@ -504,17 +415,23 @@ async function loadState() {
   }
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return null;
+    const rawCurrent = localStorage.getItem(STORAGE_KEY);
+    if (rawCurrent) {
+      return JSON.parse(rawCurrent);
     }
 
-    const parsed = JSON.parse(raw);
-    persistState(parsed);
-    return parsed;
+    const rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (rawLegacy) {
+      const legacyState = JSON.parse(rawLegacy);
+      persistState(legacyState);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return legacyState;
+    }
   } catch (error) {
     return null;
   }
+
+  return null;
 }
 
 function saveState(immediate = false) {
@@ -547,6 +464,30 @@ function saveState(immediate = false) {
   }, 180);
 }
 
+function setSlotImage(slot, src) {
+  if (!src) {
+    return;
+  }
+
+  let preview = slot.querySelector("img");
+  if (!preview) {
+    preview = document.createElement("img");
+    preview.dataset.generated = "1";
+    slot.appendChild(preview);
+  }
+
+  preview.src = src;
+  preview.alt = "Загруженное изображение";
+
+  preview.onload = () => {
+    const width = preview.naturalWidth || 1;
+    const height = preview.naturalHeight || 1;
+    slot.style.setProperty("--slot-ratio", `${width} / ${height}`);
+  };
+
+  slot.classList.add("is-filled");
+}
+
 function captureState() {
   const state = {
     images: {},
@@ -561,7 +502,9 @@ function captureState() {
     }
 
     const image = slot.querySelector("img");
-    state.images[id] = image && image.src ? image.src : "";
+    if (image && image.src) {
+      state.images[id] = image.src;
+    }
   });
 
   document.querySelectorAll(".text-editable").forEach((node) => {
@@ -573,37 +516,11 @@ function captureState() {
     state.texts[id] = node.innerHTML;
   });
 
-  document.querySelectorAll("[data-persist-id].is-hidden").forEach((node) => {
-    const id = node.dataset.persistId;
-    if (id) {
-      state.hiddenIds.push(id);
-    }
+  document.querySelectorAll(".is-hidden[data-persist-id]").forEach((node) => {
+    state.hiddenIds.push(node.dataset.persistId);
   });
 
   return state;
-}
-
-function setSlotImage(slot, src) {
-  if (!src) {
-    return;
-  }
-
-  let preview = slot.querySelector("img");
-  if (!preview) {
-    preview = document.createElement("img");
-    slot.appendChild(preview);
-  }
-
-  preview.src = src;
-  preview.alt = "Загруженное изображение";
-
-  preview.onload = () => {
-    const width = preview.naturalWidth || 1;
-    const height = preview.naturalHeight || 1;
-    slot.style.setProperty("--slot-ratio", `${width} / ${height}`);
-  };
-
-  slot.classList.add("is-filled");
 }
 
 function applyState(state) {
@@ -641,19 +558,16 @@ function applyState(state) {
     }
 
     if (image) {
-      if (image.dataset.initialSrc) {
-        image.src = image.dataset.initialSrc;
-        slot.classList.add("is-filled");
-        image.onload = () => {
-          const width = image.naturalWidth || 1;
-          const height = image.naturalHeight || 1;
-          slot.style.setProperty("--slot-ratio", `${width} / ${height}`);
-        };
-      } else {
+      if (image.dataset.generated === "1" || slot.closest(".upload-area")) {
         image.remove();
-        slot.classList.remove("is-filled");
-        slot.style.removeProperty("--slot-ratio");
+      } else if (image.dataset.initialSrc) {
+        image.src = image.dataset.initialSrc;
       }
+    }
+
+    if (!slot.querySelector("img")) {
+      slot.classList.remove("is-filled");
+      slot.style.removeProperty("--slot-ratio");
     }
   });
 
@@ -669,6 +583,10 @@ function applyState(state) {
       }
     });
   }
+
+  document.querySelectorAll('input[type="file"]').forEach((input) => {
+    input.value = "";
+  });
 }
 
 async function restoreState() {
@@ -678,27 +596,6 @@ async function restoreState() {
   }
 
   applyState(state);
-}
-
-function clearStateStorage() {
-  return openStateDb().then((db) => {
-    if (!db) {
-      localStorage.removeItem(STORAGE_KEY);
-      return;
-    }
-
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DB_STORE, "readwrite");
-      const store = tx.objectStore(DB_STORE);
-      store.delete(DB_RECORD_KEY);
-      tx.oncomplete = () => {
-        localStorage.removeItem(STORAGE_KEY);
-        resolve();
-      };
-      tx.onerror = () => reject(tx.error || new Error("IndexedDB clear failed"));
-      tx.onabort = () => reject(tx.error || new Error("IndexedDB clear aborted"));
-    });
-  });
 }
 
 function ensureUploadDescriptions() {
@@ -729,6 +626,7 @@ function ensureUploadDescriptions() {
 }
 
 ensureUploadDescriptions();
+
 editableNodes.forEach((node) => {
   if (node.closest(".upload-slot") || node.closest(".image-slot")) {
     return;
@@ -740,8 +638,8 @@ editableNodes.forEach((node) => {
 
 assignPersistentIds();
 initialState = captureState();
-restoreStatePromise = restoreState().catch(() => {
-  // Keep initial markup if restore fails.
+restoreStatePromise = restoreState().catch((error) => {
+  console.error("State restore failed", error);
 });
 
 function createRemoveButton(className, label) {
@@ -753,9 +651,26 @@ function createRemoveButton(className, label) {
   return button;
 }
 
+function updateUndoButton() {
+  const undoButton = document.querySelector("#undoButton");
+  if (undoButton) {
+    undoButton.disabled = undoHistory.length === 0;
+  }
+}
+
 function hideTarget(target) {
   target.classList.add("is-hidden");
   saveState();
+}
+
+function hideTargetWithUndo(target) {
+  undoHistory.push(captureState());
+  if (undoHistory.length > MAX_UNDO_HISTORY) {
+    undoHistory.shift();
+  }
+
+  hideTarget(target);
+  updateUndoButton();
 }
 
 function ensureSlotRemoveButton(slot) {
@@ -774,11 +689,11 @@ function ensureSlotRemoveButton(slot) {
 
     const uploadItem = slot.closest(".upload-item");
     if (uploadItem) {
-      hideTarget(uploadItem);
+      hideTargetWithUndo(uploadItem);
       return;
     }
 
-    hideTarget(slot);
+    hideTargetWithUndo(slot);
   });
 
   slot.appendChild(button);
@@ -793,7 +708,7 @@ uploadBlocks.forEach((block) => {
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    hideTarget(block);
+    hideTargetWithUndo(block);
   });
 
   block.appendChild(button);
@@ -812,7 +727,6 @@ uploadInputs.forEach((input) => {
     }
 
     try {
-      const optimizedDataUrl = await fileToOptimizedDataUrl(file);
       setSlotImage(slot, optimizedDataUrl);
       ensureSlotRemoveButton(slot);
       saveState(true);
@@ -848,15 +762,30 @@ function bindResetButton() {
     return;
   }
 
+  resetButton.disabled = true;
+  restoreStatePromise.finally(() => {
+    resetButton.disabled = false;
+  });
+
   resetButton.addEventListener("click", () => {
     const confirmed = window.confirm("Сбросить страницу к исходному состоянию и удалить все сохраненные изменения?");
     if (!confirmed) {
       return;
     }
 
+    if (saveTimerId) {
+      clearTimeout(saveTimerId);
+      saveTimerId = null;
+    }
+    pendingStateForSave = null;
+
     clearStateStorage().catch(() => {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
     });
+
+    undoHistory.length = 0;
+    updateUndoButton();
 
     if (initialState) {
       applyState(initialState);
@@ -869,11 +798,36 @@ function bindResetButton() {
   });
 }
 
+function bindUndoButton() {
+  const undoButton = document.querySelector("#undoButton");
+  if (!undoButton) {
+    return;
+  }
+
+  updateUndoButton();
+  undoButton.addEventListener("click", () => {
+    const previousState = undoHistory.pop();
+    if (!previousState) {
+      updateUndoButton();
+      return;
+    }
+
+    applyState(previousState);
+    saveState(true);
+    updateUndoButton();
+  });
+}
+
 function bindPdfButton() {
   const pdfButton = document.querySelector("#savePdfButton");
   if (!pdfButton) {
     return;
   }
+
+  pdfButton.disabled = true;
+  restoreStatePromise.finally(() => {
+    pdfButton.disabled = false;
+  });
 
   pdfButton.addEventListener("click", async () => {
     await restoreStatePromise;
@@ -899,10 +853,57 @@ function bindPdfButton() {
       }
       await waitForImages();
 
-      const pdf = await buildPdfWithCustomPageBreaks(html2canvas, JsPdf);
+      const snapshotWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+      const snapshotHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+      const safeScale = getSafeCanvasScale(snapshotWidth, snapshotHeight);
+
+      const canvas = await html2canvas(body, {
+        backgroundColor: "#ffffff",
+        scale: safeScale,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: snapshotWidth,
+        windowHeight: snapshotHeight,
+        onclone: (clonedDoc) => {
+          const style = clonedDoc.createElement("style");
+          style.textContent = `
+            .upload-slot,
+            .image-slot {
+              overflow: visible !important;
+              aspect-ratio: auto !important;
+              height: auto !important;
+              min-height: 0 !important;
+            }
+
+            .upload-slot img,
+            .image-slot img {
+              position: static !important;
+              inset: auto !important;
+              transform: none !important;
+              width: 100% !important;
+              height: auto !important;
+              max-width: 100% !important;
+              max-height: none !important;
+              object-fit: contain !important;
+              object-position: center !important;
+            }
+          `;
+          clonedDoc.head.appendChild(style);
+        },
+      });
+
+      if (!canvas.width || !canvas.height) {
+        throw new Error("Canvas is empty after rendering");
+      }
+
+      const pdf = buildPdfFromCanvasPaged(canvas, JsPdf);
       await deliverPdfFile(pdf, "makiyazh-dlya-sebya.pdf");
     } catch (error) {
-      alert("Не получилось сохранить PDF. Попробуй еще раз.");
+      console.error("PDF export failed", error);
+      alert("Не получилось сохранить PDF. Страница слишком большая или есть очень тяжелые изображения. Уменьши фото и попробуй еще раз.");
     } finally {
       body.classList.remove("is-exporting-pdf");
       pdfButton.disabled = false;
@@ -911,12 +912,30 @@ function bindPdfButton() {
   });
 }
 
+function bindStateFlushOnExit() {
+  const flushNow = () => {
+    saveState(true);
+  };
+
+  window.addEventListener("pagehide", flushNow);
+  window.addEventListener("beforeunload", flushNow);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushNow();
+    }
+  });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     bindPdfButton();
     bindResetButton();
+    bindUndoButton();
+    bindStateFlushOnExit();
   });
 } else {
   bindPdfButton();
   bindResetButton();
+  bindUndoButton();
+  bindStateFlushOnExit();
 }
