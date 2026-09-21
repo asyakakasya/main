@@ -196,64 +196,191 @@ async function fileToOptimizedDataUrl(file) {
   }
 }
 
-function getSafeCanvasScale(width, height) {
-  const deviceScale = Math.min(2, window.devicePixelRatio || 1);
-  const maxSide = 14000;
-  const maxArea = 120000000;
-  const sideScale = maxSide / Math.max(width, height);
-  const areaScale = Math.sqrt(maxArea / Math.max(1, width * height));
-  // Allow smaller scales for very long pages to avoid blank canvas on mobile.
-  return Math.max(0.12, Math.min(deviceScale, sideScale, areaScale));
+function getPdfCloneStyleText() {
+  return `
+    .upload-slot,
+    .image-slot {
+      overflow: visible !important;
+      aspect-ratio: auto !important;
+      height: auto !important;
+      min-height: 0 !important;
+    }
+
+    .upload-slot img,
+    .image-slot img {
+      position: static !important;
+      inset: auto !important;
+      transform: none !important;
+      width: 100% !important;
+      height: auto !important;
+      max-width: 100% !important;
+      max-height: none !important;
+      object-fit: contain !important;
+      object-position: center !important;
+    }
+
+    .add-content-button,
+    .remove-block-btn,
+    .remove-slot-btn,
+    .photo-placeholder,
+    input[type="file"],
+    .pdf-button-wrap {
+      display: none !important;
+    }
+  `;
 }
 
-function buildPdfFromCanvasPaged(canvas, JsPdf) {
-  const pdf = new JsPdf({
-    orientation: "portrait",
-    unit: "pt",
-    format: "a4",
-    compress: true,
+function buildPdfPageNodes() {
+  const nodes = [];
+  const cover = document.querySelector(".cover-page");
+  const sheet = document.querySelector(".sheet");
+  if (!sheet) {
+    return nodes;
+  }
+
+  const uploadArea = sheet.querySelector(".upload-area");
+
+  const firstPageWrapper = document.createElement("div");
+  if (cover) {
+    firstPageWrapper.appendChild(cover.cloneNode(true));
+  }
+
+  const firstPageSheet = document.createElement("main");
+  firstPageSheet.className = sheet.className;
+  Array.from(sheet.children).forEach((child) => {
+    if (child === uploadArea) {
+      return;
+    }
+
+    firstPageSheet.appendChild(child.cloneNode(true));
   });
+  firstPageWrapper.appendChild(firstPageSheet);
+  nodes.push(firstPageWrapper);
 
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pdfHeight = pdf.internal.pageSize.getHeight();
-  const ratio = pdfWidth / canvas.width;
-  const sliceHeightPx = Math.max(1, Math.floor(pdfHeight / ratio));
-  let offsetY = 0;
-  let pageIndex = 0;
+  if (!uploadArea) {
+    const footerOnly = document.querySelector(".site-footer");
+    if (footerOnly) {
+      const footerWrapper = document.createElement("div");
+      footerWrapper.appendChild(footerOnly.cloneNode(true));
+      nodes.push(footerWrapper);
+    }
+    return nodes;
+  }
 
-  while (offsetY < canvas.height) {
-    const currentSliceHeight = Math.min(sliceHeightPx, canvas.height - offsetY);
-    const pageCanvas = document.createElement("canvas");
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = currentSliceHeight;
+  const cosmeticsTitle = Array.from(uploadArea.children).find(
+    (child) => child.classList && child.classList.contains("cosmetics-title"),
+  );
+  const cosmeticsBlocks = Array.from(uploadArea.children).filter(
+    (child) =>
+      child.classList &&
+      child.classList.contains("upload-block") &&
+      !child.classList.contains("is-hidden"),
+  );
 
-    const context = pageCanvas.getContext("2d");
-    if (!context) {
-      throw new Error("Не удалось подготовить страницу PDF");
+  for (let index = 0; index < cosmeticsBlocks.length; index += 4) {
+    const pageSection = document.createElement("section");
+    pageSection.className = uploadArea.className;
+
+    if (index === 0 && cosmeticsTitle) {
+      pageSection.appendChild(cosmeticsTitle.cloneNode(true));
     }
 
-    context.drawImage(
-      canvas,
-      0,
-      offsetY,
-      canvas.width,
-      currentSliceHeight,
-      0,
-      0,
-      canvas.width,
-      currentSliceHeight,
-    );
+    cosmeticsBlocks.slice(index, index + 4).forEach((block) => {
+      pageSection.appendChild(block.cloneNode(true));
+    });
 
-    const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
-    const renderedHeight = currentSliceHeight * ratio;
-
-    if (pageIndex > 0) {
-      pdf.addPage();
+    if (index + 4 >= cosmeticsBlocks.length) {
+      const footer = document.querySelector(".site-footer");
+      if (footer) {
+        pageSection.appendChild(footer.cloneNode(true));
+      }
     }
 
-    pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, renderedHeight, undefined, "FAST");
-    pageIndex += 1;
-    offsetY += currentSliceHeight;
+    nodes.push(pageSection);
+  }
+
+  return nodes;
+}
+
+async function renderPdfPageNode(node, html2canvas, scale) {
+  const renderRoot = document.createElement("div");
+  renderRoot.style.position = "fixed";
+  renderRoot.style.left = "-10000px";
+  renderRoot.style.top = "0";
+  renderRoot.style.width = `${Math.max(document.documentElement.clientWidth, document.body.clientWidth)}px`;
+  renderRoot.style.background = "#ffffff";
+  renderRoot.style.zIndex = "-1";
+  renderRoot.style.pointerEvents = "none";
+  renderRoot.appendChild(node);
+  document.body.appendChild(renderRoot);
+
+  try {
+    return await html2canvas(node, {
+      backgroundColor: "#ffffff",
+      scale,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: Math.max(node.scrollWidth, renderRoot.clientWidth),
+      windowHeight: Math.max(node.scrollHeight, 1),
+      onclone: (clonedDoc) => {
+        const style = clonedDoc.createElement("style");
+        style.textContent = getPdfCloneStyleText();
+        clonedDoc.head.appendChild(style);
+      },
+    });
+  } finally {
+    renderRoot.remove();
+  }
+}
+
+function addCanvasAsPdfPage(pdf, canvas, JsPdf) {
+  const MAX_PDF_SIDE_PT = 14000;
+  const baseWidthPt = canvas.width * 0.75;
+  const baseHeightPt = canvas.height * 0.75;
+  const pageScale = Math.min(1, MAX_PDF_SIDE_PT / Math.max(baseWidthPt, baseHeightPt));
+  const pageWidthPt = Math.max(1, baseWidthPt * pageScale);
+  const pageHeightPt = Math.max(1, baseHeightPt * pageScale);
+  const orientation = pageWidthPt >= pageHeightPt ? "landscape" : "portrait";
+
+  if (!pdf) {
+    pdf = new JsPdf({
+      orientation,
+      unit: "pt",
+      format: [pageWidthPt, pageHeightPt],
+      compress: true,
+    });
+  } else {
+    pdf.addPage([pageWidthPt, pageHeightPt], orientation);
+  }
+
+  const imageData = canvas.toDataURL("image/jpeg", 0.96);
+  pdf.addImage(imageData, "JPEG", 0, 0, pageWidthPt, pageHeightPt, undefined, "FAST");
+  return pdf;
+}
+
+async function buildPdfWithCustomPageBreaks(html2canvas, JsPdf) {
+  const pageNodes = buildPdfPageNodes();
+  if (!pageNodes.length) {
+    throw new Error("Нет данных для экспорта PDF");
+  }
+
+  const scale = Math.min(2, window.devicePixelRatio || 1);
+  let pdf = null;
+
+  for (const pageNode of pageNodes) {
+    const canvas = await renderPdfPageNode(pageNode, html2canvas, scale);
+    if (!canvas.width || !canvas.height) {
+      continue;
+    }
+
+    pdf = addCanvasAsPdfPage(pdf, canvas, JsPdf);
+  }
+
+  if (!pdf) {
+    throw new Error("Не удалось собрать PDF");
   }
 
   return pdf;
@@ -748,7 +875,8 @@ function createUploadBlock(id = createDynamicId("block")) {
   const grid = document.createElement("div");
   grid.className = "upload-grid";
   block.append(title, grid);
-  document.querySelector(".upload-area").appendChild(block);
+  const area = document.querySelector(".upload-area");
+  area.insertBefore(block, area.querySelector(".add-block-button"));
   ensureBlockControls(block);
   return block;
 }
@@ -801,7 +929,7 @@ function bindAddBlockButton() {
     saveState(true);
     block.querySelector("h3").focus();
   });
-  area.insertBefore(button, area.querySelector(".upload-block"));
+  area.appendChild(button);
 }
 
 function ensureSlotRemoveButton(slot) {
@@ -973,53 +1101,7 @@ function bindPdfButton() {
       }
       await waitForImages();
 
-      const snapshotWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
-      const snapshotHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
-      const safeScale = getSafeCanvasScale(snapshotWidth, snapshotHeight);
-
-      const canvas = await html2canvas(body, {
-        backgroundColor: "#ffffff",
-        scale: safeScale,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: snapshotWidth,
-        windowHeight: snapshotHeight,
-        onclone: (clonedDoc) => {
-          const style = clonedDoc.createElement("style");
-          style.textContent = `
-            .upload-slot,
-            .image-slot {
-              overflow: visible !important;
-              aspect-ratio: auto !important;
-              height: auto !important;
-              min-height: 0 !important;
-            }
-
-            .upload-slot img,
-            .image-slot img {
-              position: static !important;
-              inset: auto !important;
-              transform: none !important;
-              width: 100% !important;
-              height: auto !important;
-              max-width: 100% !important;
-              max-height: none !important;
-              object-fit: contain !important;
-              object-position: center !important;
-            }
-          `;
-          clonedDoc.head.appendChild(style);
-        },
-      });
-
-      if (!canvas.width || !canvas.height) {
-        throw new Error("Canvas is empty after rendering");
-      }
-
-      const pdf = buildPdfFromCanvasPaged(canvas, JsPdf);
+      const pdf = await buildPdfWithCustomPageBreaks(html2canvas, JsPdf);
       await deliverPdfFile(pdf, "makiyazh-dlya-sebya.pdf");
     } catch (error) {
       console.error("PDF export failed", error);
