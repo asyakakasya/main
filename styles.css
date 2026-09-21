@@ -82,6 +82,7 @@ body {
 }
 
 .is-exporting-pdf .pdf-button-wrap,
+.is-exporting-pdf .add-content-button,
 .is-exporting-pdf .remove-block-btn,
 .is-exporting-pdf .remove-slot-btn,
 .is-exporting-pdf .photo-placeholder,
@@ -415,8 +416,46 @@ h1 {
 
 .upload-block h3 {
   margin: 0 0 0.5rem;
+  padding-right: 2rem;
+  overflow-wrap: anywhere;
   font-size: clamp(1rem, 1.2vw, 1.15rem);
   color: var(--muted);
+}
+
+.add-content-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  max-width: 100%;
+  margin: 0.7rem 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.add-content-button:hover {
+  background: #f3eadf;
+}
+
+.add-content-button:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 3px;
+}
+
+.add-content-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.add-block-button {
+  font-weight: 600;
 }
 
 .upload-grid {
@@ -433,6 +472,7 @@ h1 {
 
 .upload-description {
   margin: 0;
+  overflow-wrap: anywhere;
   min-height: 1.15rem;
   padding: 0.2rem 0.35rem;
   border-radius: 8px;
@@ -643,6 +683,10 @@ h1 {
 }
 
 @media print {
+  .add-content-button {
+    display: none !important;
+  }
+
   @page {
     size: A4;
     margin: 10mm;

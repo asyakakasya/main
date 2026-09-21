@@ -1,4 +1,3 @@
-const uploadInputs = document.querySelectorAll('.upload-slot input[type="file"], .image-slot input[type="file"]');
 const editableNodes = document.querySelectorAll(".sheet h1, .sheet h2, .sheet h3, .sheet p, .sheet li");
 const uploadBlocks = document.querySelectorAll(".upload-block");
 const STORAGE_KEY = "makeup-checklist-state-v5";
@@ -18,6 +17,7 @@ let hasShownStorageError = false;
 let restoreStatePromise = Promise.resolve();
 const undoHistory = [];
 const MAX_UNDO_HISTORY = 20;
+let dynamicIdCounter = 0;
 
 function openStateDb() {
   if (!("indexedDB" in window)) {
@@ -493,6 +493,13 @@ function captureState() {
     images: {},
     texts: {},
     hiddenIds: [],
+    addedBlocks: Array.from(document.querySelectorAll('.upload-block[data-added="1"]'),
+      (block) => block.dataset.persistId),
+    addedSlots: Array.from(document.querySelectorAll('.upload-item[data-added="1"]'),
+      (item) => ({
+        id: item.dataset.persistId,
+        blockId: item.closest(".upload-block").dataset.persistId,
+      })),
   };
 
   document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
@@ -527,6 +534,18 @@ function applyState(state) {
   if (!state || typeof state !== "object") {
     return;
   }
+
+  document.querySelectorAll('.upload-block[data-added="1"], .upload-item[data-added="1"]').forEach((node) => {
+    node.remove();
+  });
+  (state.addedBlocks || []).forEach((id) => createUploadBlock(id));
+  (state.addedSlots || []).forEach(({ id, blockId }) => {
+    const block = Array.from(document.querySelectorAll(".upload-block"))
+      .find((node) => node.dataset.persistId === blockId);
+    if (block) {
+      createUploadItem(block, id);
+    }
+  });
 
   document.querySelectorAll("[data-persist-id]").forEach((node) => {
     node.classList.remove("is-hidden");
@@ -663,14 +682,127 @@ function hideTarget(target) {
   saveState();
 }
 
-function hideTargetWithUndo(target) {
+function rememberUndoState() {
   undoHistory.push(captureState());
   if (undoHistory.length > MAX_UNDO_HISTORY) {
     undoHistory.shift();
   }
 
-  hideTarget(target);
   updateUndoButton();
+}
+
+function hideTargetWithUndo(target) {
+  rememberUndoState();
+  hideTarget(target);
+}
+
+function createDynamicId(kind) {
+  let id;
+  do {
+    dynamicIdCounter += 1;
+    id = `${kind}-added-${dynamicIdCounter}`;
+  } while (document.querySelector(`[data-persist-id="${id}"]`));
+  return id;
+}
+
+function createUploadItem(block, id = createDynamicId("slot")) {
+  const item = document.createElement("div");
+  item.className = "upload-item";
+  item.dataset.added = "1";
+  item.dataset.persistId = id;
+
+  const slot = document.createElement("label");
+  slot.className = "upload-slot";
+  slot.dataset.persistId = id;
+  slot.textContent = "+ Загрузить изображение";
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  slot.appendChild(input);
+
+  const description = document.createElement("p");
+  description.className = "upload-description text-editable";
+  description.contentEditable = "true";
+  description.dataset.persistId = `${id}-description`;
+  description.textContent = "Описание фото";
+
+  item.append(slot, description);
+  block.querySelector(".upload-grid").appendChild(item);
+  ensureSlotRemoveButton(slot);
+  return item;
+}
+
+function createUploadBlock(id = createDynamicId("block")) {
+  const block = document.createElement("div");
+  block.className = "upload-block";
+  block.dataset.added = "1";
+  block.dataset.persistId = id;
+
+  const title = document.createElement("h3");
+  title.className = "text-editable";
+  title.contentEditable = "true";
+  title.dataset.persistId = `${id}-title`;
+  title.textContent = `Блок ${document.querySelectorAll(".upload-block").length + 1}`;
+
+  const grid = document.createElement("div");
+  grid.className = "upload-grid";
+  block.append(title, grid);
+  document.querySelector(".upload-area").appendChild(block);
+  ensureBlockControls(block);
+  return block;
+}
+
+function createAddButton(className, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `add-content-button ${className}`;
+  button.textContent = `+ ${label}`;
+  return button;
+}
+
+function ensureBlockControls(block) {
+  if (!block.querySelector(".remove-block-btn")) {
+    const removeButton = createRemoveButton("remove-block-btn", "Скрыть блок");
+    removeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideTargetWithUndo(block);
+    });
+    block.appendChild(removeButton);
+  }
+
+  if (!block.querySelector(".add-image-button")) {
+    const addButton = createAddButton("add-image-button", "Добавить картинку");
+    addButton.disabled = true;
+    restoreStatePromise.finally(() => {
+      addButton.disabled = false;
+    });
+    addButton.addEventListener("click", () => {
+      rememberUndoState();
+      const item = createUploadItem(block);
+      saveState(true);
+      item.querySelector('input[type="file"]').click();
+    });
+    block.appendChild(addButton);
+  }
+}
+
+function bindAddBlockButton() {
+  const area = document.querySelector(".upload-area");
+  const button = createAddButton("add-block-button", "Добавить блок");
+  button.disabled = true;
+  restoreStatePromise.finally(() => {
+    button.disabled = false;
+  });
+  button.addEventListener("click", () => {
+    rememberUndoState();
+    const block = createUploadBlock();
+    createUploadItem(block);
+    saveState(true);
+    block.querySelector("h3").focus();
+  });
+  area.insertBefore(button, area.querySelector(".upload-block"));
 }
 
 function ensureSlotRemoveButton(slot) {
@@ -699,23 +831,14 @@ function ensureSlotRemoveButton(slot) {
   slot.appendChild(button);
 }
 
-uploadBlocks.forEach((block) => {
-  if (block.querySelector(".remove-block-btn")) {
-    return;
-  }
+uploadBlocks.forEach(ensureBlockControls);
+bindAddBlockButton();
 
-  const button = createRemoveButton("remove-block-btn", "Скрыть блок");
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    hideTargetWithUndo(block);
-  });
-
-  block.appendChild(button);
-});
-
-uploadInputs.forEach((input) => {
-  input.addEventListener("change", async (event) => {
+document.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (!input.matches('.upload-slot input[type="file"], .image-slot input[type="file"]')) {
+      return;
+    }
     const file = event.target.files && event.target.files[0];
     if (!file) {
       return;
@@ -727,14 +850,17 @@ uploadInputs.forEach((input) => {
     }
 
     try {
+      await restoreStatePromise;
       const optimizedDataUrl = await fileToOptimizedDataUrl(file);
+      if (!slot.isConnected) {
+        return;
+      }
       setSlotImage(slot, optimizedDataUrl);
       ensureSlotRemoveButton(slot);
       saveState(true);
     } catch (error) {
       alert("Не удалось обработать изображение. Попробуй другое фото.");
     }
-  });
 });
 
 document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
@@ -745,16 +871,10 @@ document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
   ensureSlotRemoveButton(slot);
 });
 
-document.querySelectorAll(".upload-description").forEach((description) => {
-  description.addEventListener("input", () => {
+document.addEventListener("input", (event) => {
+  if (event.target.closest(".text-editable")) {
     saveState();
-  });
-});
-
-document.querySelectorAll(".text-editable").forEach((node) => {
-  node.addEventListener("input", () => {
-    saveState();
-  });
+  }
 });
 
 function bindResetButton() {
