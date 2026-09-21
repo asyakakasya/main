@@ -780,9 +780,8 @@ function ensureBlockControls(block) {
     });
     addButton.addEventListener("click", () => {
       rememberUndoState();
-      const item = createUploadItem(block);
+      createUploadItem(block);
       saveState(true);
-      item.querySelector('input[type="file"]').click();
     });
     block.appendChild(addButton);
   }
