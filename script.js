@@ -6,6 +6,8 @@ const DB_NAME = "makeup-checklist-db";
 const DB_VERSION = 1;
 const DB_STORE = "state";
 const DB_RECORD_KEY = "current";
+const DB_UNDO_KEY = "undo-history";
+const UNDO_STORAGE_KEY = "makeup-checklist-undo-v1";
 const IMAGE_MAX_SIDE = 1600;
 const IMAGE_JPEG_QUALITY = 0.8;
 let latestPdfUrl = "";
@@ -45,16 +47,17 @@ function openStateDb() {
   return stateDbPromise;
 }
 
-function readStateFromDb() {
+function readRecordFromDb(recordKey, storageKey) {
   return openStateDb().then((db) => {
     if (!db) {
-      return null;
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : null;
     }
 
     return new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, "readonly");
       const store = tx.objectStore(DB_STORE);
-      const request = store.get(DB_RECORD_KEY);
+      const request = store.get(recordKey);
 
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error || new Error("IndexedDB read failed"));
@@ -62,17 +65,17 @@ function readStateFromDb() {
   });
 }
 
-function writeStateToDb(state) {
+function writeRecordToDb(recordKey, storageKey, value) {
   return openStateDb().then((db) => {
     if (!db) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(storageKey, JSON.stringify(value));
       return;
     }
 
     return new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, "readwrite");
       const store = tx.objectStore(DB_STORE);
-      store.put(state, DB_RECORD_KEY);
+      store.put(value, recordKey);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error("IndexedDB write failed"));
       tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
@@ -80,11 +83,24 @@ function writeStateToDb(state) {
   });
 }
 
+function readStateFromDb() {
+  return readRecordFromDb(DB_RECORD_KEY, STORAGE_KEY);
+}
+
+function writeStateToDb(state) {
+  return writeRecordToDb(DB_RECORD_KEY, STORAGE_KEY, state);
+}
+
+function clearLocalStorageCopies() {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
+  localStorage.removeItem(UNDO_STORAGE_KEY);
+}
+
 function clearStateStorage() {
   return openStateDb().then((db) => {
     if (!db) {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      clearLocalStorageCopies();
       return;
     }
 
@@ -92,9 +108,9 @@ function clearStateStorage() {
       const tx = db.transaction(DB_STORE, "readwrite");
       const store = tx.objectStore(DB_STORE);
       store.delete(DB_RECORD_KEY);
+      store.delete(DB_UNDO_KEY);
       tx.oncomplete = () => {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        clearLocalStorageCopies();
         resolve();
       };
       tx.onerror = () => reject(tx.error || new Error("IndexedDB clear failed"));
@@ -120,6 +136,10 @@ function persistState(state) {
       showStorageErrorOnce();
     }
   });
+}
+
+function persistUndoHistory() {
+  writeRecordToDb(DB_UNDO_KEY, UNDO_STORAGE_KEY, undoHistory.slice()).catch(() => {});
 }
 
 function getJsPdfConstructor() {
@@ -615,11 +635,12 @@ function setSlotImage(slot, src) {
   slot.classList.add("is-filled");
 }
 
-function captureState() {
-  const state = {
-    images: {},
-    texts: {},
-    hiddenIds: [],
+function captureStructure() {
+  return {
+    hiddenIds: Array.from(
+      document.querySelectorAll(".is-hidden[data-persist-id]"),
+      (node) => node.dataset.persistId,
+    ),
     addedBlocks: Array.from(document.querySelectorAll('.upload-block[data-added="1"]'),
       (block) => block.dataset.persistId),
     addedSlots: Array.from(document.querySelectorAll('.upload-item[data-added="1"]'),
@@ -627,6 +648,14 @@ function captureState() {
         id: item.dataset.persistId,
         blockId: item.closest(".upload-block").dataset.persistId,
       })),
+  };
+}
+
+function captureState() {
+  const state = {
+    images: {},
+    texts: {},
+    ...captureStructure(),
   };
 
   document.querySelectorAll(".upload-slot, .image-slot").forEach((slot) => {
@@ -650,25 +679,32 @@ function captureState() {
     state.texts[id] = node.innerHTML;
   });
 
-  document.querySelectorAll(".is-hidden[data-persist-id]").forEach((node) => {
-    state.hiddenIds.push(node.dataset.persistId);
-  });
-
   return state;
 }
 
-function applyState(state) {
-  if (!state || typeof state !== "object") {
-    return;
-  }
+function applyStructure(structure) {
+  const addedBlocks = structure.addedBlocks || [];
+  const addedSlots = structure.addedSlots || [];
+  const keptIds = new Set([...addedBlocks, ...addedSlots.map((slot) => slot.id)]);
 
   document.querySelectorAll('.upload-block[data-added="1"], .upload-item[data-added="1"]').forEach((node) => {
-    node.remove();
+    if (!keptIds.has(node.dataset.persistId)) {
+      node.remove();
+    }
   });
-  (state.addedBlocks || []).forEach((id) => createUploadBlock(id));
-  (state.addedSlots || []).forEach(({ id, blockId }) => {
-    const block = Array.from(document.querySelectorAll(".upload-block"))
-      .find((node) => node.dataset.persistId === blockId);
+
+  addedBlocks.forEach((id) => {
+    if (!document.querySelector(`.upload-block[data-persist-id="${id}"]`)) {
+      createUploadBlock(id);
+    }
+  });
+
+  addedSlots.forEach(({ id, blockId }) => {
+    if (document.querySelector(`.upload-item[data-persist-id="${id}"]`)) {
+      return;
+    }
+
+    const block = document.querySelector(`.upload-block[data-persist-id="${blockId}"]`);
     if (block) {
       createUploadItem(block, id);
     }
@@ -677,6 +713,20 @@ function applyState(state) {
   document.querySelectorAll("[data-persist-id]").forEach((node) => {
     node.classList.remove("is-hidden");
   });
+
+  (structure.hiddenIds || []).forEach((id) => {
+    document.querySelectorAll(`[data-persist-id="${id}"]`).forEach((node) => {
+      node.classList.add("is-hidden");
+    });
+  });
+}
+
+function applyState(state) {
+  if (!state || typeof state !== "object") {
+    return;
+  }
+
+  applyStructure(state);
 
   document.querySelectorAll(".text-editable").forEach((node) => {
     const id = node.dataset.persistId;
@@ -717,31 +767,31 @@ function applyState(state) {
     }
   });
 
-  if (Array.isArray(state.hiddenIds)) {
-    state.hiddenIds.forEach((id) => {
-      if (!id) {
-        return;
-      }
-
-      const target = document.querySelector(`[data-persist-id="${id}"]`);
-      if (target) {
-        target.classList.add("is-hidden");
-      }
-    });
-  }
-
   document.querySelectorAll('input[type="file"]').forEach((input) => {
     input.value = "";
   });
 }
 
-async function restoreState() {
-  const state = await loadState();
-  if (!state) {
-    return;
+async function restoreUndoHistory() {
+  try {
+    const stored = await readRecordFromDb(DB_UNDO_KEY, UNDO_STORAGE_KEY);
+    if (Array.isArray(stored)) {
+      undoHistory.push(...stored.slice(-MAX_UNDO_HISTORY));
+    }
+  } catch (error) {
+    // Undo history is optional; ignore unreadable data.
   }
 
-  applyState(state);
+  updateUndoButton();
+}
+
+async function restoreState() {
+  const state = await loadState();
+  if (state) {
+    applyState(state);
+  }
+
+  await restoreUndoHistory();
 }
 
 function ensureUploadDescriptions() {
@@ -810,11 +860,12 @@ function hideTarget(target) {
 }
 
 function rememberUndoState() {
-  undoHistory.push(captureState());
+  undoHistory.push(captureStructure());
   if (undoHistory.length > MAX_UNDO_HISTORY) {
     undoHistory.shift();
   }
 
+  persistUndoHistory();
   updateUndoButton();
 }
 
@@ -1028,8 +1079,7 @@ function bindResetButton() {
     pendingStateForSave = null;
 
     clearStateStorage().catch(() => {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      clearLocalStorageCopies();
     });
 
     undoHistory.length = 0;
@@ -1053,15 +1103,19 @@ function bindUndoButton() {
   }
 
   updateUndoButton();
-  undoButton.addEventListener("click", () => {
-    const previousState = undoHistory.pop();
-    if (!previousState) {
+  restoreStatePromise.finally(updateUndoButton);
+  undoButton.addEventListener("click", async () => {
+    await restoreStatePromise;
+
+    const previousStructure = undoHistory.pop();
+    if (!previousStructure) {
       updateUndoButton();
       return;
     }
 
-    applyState(previousState);
+    applyStructure(previousStructure);
     saveState(true);
+    persistUndoHistory();
     updateUndoButton();
   });
 }
